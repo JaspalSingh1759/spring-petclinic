@@ -2,50 +2,61 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "mydockeruser/myimage"
+        DOCKER_IMAGE = "jaspalsingh1759/petclinic"
+    }
+
+    triggers {
+        githubPush()
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build JAR (Maven)') {
+            steps {
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Docker Build') {
             steps {
                 script {
-                    COMMIT_HASH = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+
                     sh """
-                    docker build -t ${IMAGE_NAME}:latest -t ${IMAGE_NAME}:${COMMIT_HASH} .
+                    docker build \
+                      -t ${DOCKER_IMAGE}:latest \
+                      -t ${DOCKER_IMAGE}:${COMMIT} .
                     """
                 }
             }
         }
 
-        stage('Login to Docker Hub') {
+        stage('Docker Push') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', 
-                                                 usernameVariable: 'USER', 
-                                                 passwordVariable: 'PASS')]) {
-                    sh "echo \$PASS | docker login -u \$USER --password-stdin"
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+                    sh """
+                    echo "$PASS" | docker login -u "$USER" --password-stdin
+                    docker push ${DOCKER_IMAGE}:latest
+                    docker push ${DOCKER_IMAGE}:${COMMIT}
+                    """
                 }
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
-                sh """
-                docker push ${IMAGE_NAME}:latest
-                docker push ${IMAGE_NAME}:${COMMIT_HASH}
-                """
             }
         }
     }
 
     post {
         always {
-            sh "docker logout"
+            sh 'docker logout || true'
         }
     }
 }
