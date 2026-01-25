@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = "jaspalsingh1759/petclinic"
+        DOCKER_IMAGE = "jaspsing369/petclinic"
     }
 
     triggers {
