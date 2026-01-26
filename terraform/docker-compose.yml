@@ -1,0 +1,27 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: petclinic
+      POSTGRES_USER: petuser
+      POSTGRES_PASSWORD: petpass
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    restart: always
+
+  app:
+    image: jaspsing369/petclinic:latest   # your pushed image
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
+      SPRING_DATASOURCE_USERNAME: petuser
+      SPRING_DATASOURCE_PASSWORD: petpass
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    restart: always
+
+volumes:
+  dbdata:
+
