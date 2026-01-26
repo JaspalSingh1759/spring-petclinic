@@ -3,17 +3,6 @@ provider "aws" {
 }
 
 # ----------------------------
-# Variables
-# ----------------------------
-variable "key_name" {
-  type = string
-}
-
-variable "private_key_path" {
-  type = string
-}
-
-# ----------------------------
 # Security Group
 # ----------------------------
 resource "aws_security_group" "petclinic_sg" {
@@ -48,17 +37,15 @@ resource "aws_security_group" "petclinic_sg" {
 # EC2 Instance (Ubuntu)
 # ----------------------------
 resource "aws_instance" "petclinic_ec2" {
-  ami           = "ami-04a81a99f5ec58529" # Ubuntu 22.04 LTS (us-east-1)
+  ami           = "ami-04a81a99f5ec58529"
   instance_type = "t2.micro"
   key_name      = var.key_name
   security_groups = [aws_security_group.petclinic_sg.name]
 
   user_data = <<-EOF
     #!/bin/bash
-
     apt-get update -y
 
-    # Install Docker
     apt-get install -y ca-certificates curl gnupg lsb-release
     mkdir -p /etc/apt/keyrings
 
@@ -78,13 +65,10 @@ resource "aws_instance" "petclinic_ec2" {
     systemctl enable docker
     systemctl start docker
 
-    # Install docker-compose
     curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
       -o /usr/local/bin/docker-compose
-
     chmod +x /usr/local/bin/docker-compose
 
-    # Create app directory
     mkdir -p /app
   EOF
 
@@ -99,7 +83,7 @@ resource "aws_instance" "petclinic_ec2" {
 resource "null_resource" "upload_compose" {
   depends_on = [aws_instance.petclinic_ec2]
 
-  # 🔥 Correct location for connection block
+  # Correct placement of connection block
   connection {
     type        = "ssh"
     host        = aws_instance.petclinic_ec2.public_ip
@@ -121,9 +105,6 @@ resource "null_resource" "upload_compose" {
   }
 }
 
-# ----------------------------
-# Outputs
-# ----------------------------
 output "public_ip" {
   value = aws_instance.petclinic_ec2.public_ip
 }
