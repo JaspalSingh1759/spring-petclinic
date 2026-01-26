@@ -69,14 +69,20 @@ pipeline {
             steps {
                 dir('terraform') {
                     withCredentials([
+                        sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY_PATH'),
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        sh "terraform apply -auto-approve"
+                        sh """
+                        terraform apply -auto-approve \
+                        -var key_name=my-keypair \
+                        -var private_key_path=$SSH_KEY_PATH
+                        """
                     }
                 }
             }
         }
+
 
     }
 
