@@ -3,6 +3,17 @@ provider "aws" {
 }
 
 # ----------------------------
+# Variables
+# ----------------------------
+variable "key_name" {
+  type = string
+}
+
+variable "private_key_path" {
+  type = string
+}
+
+# ----------------------------
 # Security Group
 # ----------------------------
 resource "aws_security_group" "petclinic_sg" {
@@ -37,7 +48,7 @@ resource "aws_security_group" "petclinic_sg" {
 # EC2 Instance (Ubuntu)
 # ----------------------------
 resource "aws_instance" "petclinic_ec2" {
-  ami           = "ami-04a81a99f5ec58529" # Ubuntu 22.04 LTS in us-east-1
+  ami           = "ami-04a81a99f5ec58529" # Ubuntu 22.04 LTS (us-east-1)
   instance_type = "t2.micro"
   key_name      = var.key_name
   security_groups = [aws_security_group.petclinic_sg.name]
@@ -47,12 +58,12 @@ resource "aws_instance" "petclinic_ec2" {
 
     apt-get update -y
 
-    # install Docker
+    # Install Docker
     apt-get install -y ca-certificates curl gnupg lsb-release
-
     mkdir -p /etc/apt/keyrings
 
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+      gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
@@ -67,12 +78,13 @@ resource "aws_instance" "petclinic_ec2" {
     systemctl enable docker
     systemctl start docker
 
-    # install docker-compose
+    # Install docker-compose
     curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
       -o /usr/local/bin/docker-compose
+
     chmod +x /usr/local/bin/docker-compose
 
-    # create app directory
+    # Create app directory
     mkdir -p /app
   EOF
 
@@ -87,16 +99,17 @@ resource "aws_instance" "petclinic_ec2" {
 resource "null_resource" "upload_compose" {
   depends_on = [aws_instance.petclinic_ec2]
 
+  # 🔥 Correct location for connection block
+  connection {
+    type        = "ssh"
+    host        = aws_instance.petclinic_ec2.public_ip
+    user        = "ubuntu"
+    private_key = file(var.private_key_path)
+  }
+
   provisioner "file" {
     source      = "docker-compose.yml"
     destination = "/app/docker-compose.yml"
-
-    connection {
-      type        = "ssh"
-      host        = aws_instance.petclinic_ec2.public_ip
-      user        = "ubuntu"
-      private_key = file(var.private_key_path)
-    }
   }
 
   provisioner "remote-exec" {
@@ -105,17 +118,12 @@ resource "null_resource" "upload_compose" {
       "docker-compose pull",
       "docker-compose up -d"
     ]
-
-    connection {
-      type        = "ssh"
-      host        = aws_instance.petclinic_ec2.public_ip
-      user        = "ubuntu"
-      private_key = file(var.private_key_path)
-    }
   }
 }
 
+# ----------------------------
+# Outputs
+# ----------------------------
 output "public_ip" {
   value = aws_instance.petclinic_ec2.public_ip
 }
-
