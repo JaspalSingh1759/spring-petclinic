@@ -76,7 +76,7 @@ pipeline {
                     ]) {
                         sh """
                         terraform apply -auto-approve \
-                        -var key_name=test\
+                        -var key_name=test \
                         -var private_key_path=$SSH_KEY_PATH
                         """
                     }
