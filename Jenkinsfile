@@ -71,15 +71,17 @@ pipeline {
                 dir('terraform') {
                     withCredentials([
                     sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY_PATH'),
+                    string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        sh """
-                        echo "===== DEBUGGING SSH KEY ====="
-                        echo "File Path: $SSH_KEY_PATH"
-                        ls -l $SSH_KEY_PATH || echo "File not found"
-                        echo "----- FILE CONTENT BEGIN -----"
-                        sed -n '1,5p' $SSH_KEY_PATH || echo "Cannot read file"
-                        echo "----- FILE CONTENT END -----"
-                        """
+
+                    sh '''
+                        echo "Running Terraform Apply Safely..."
+
+                        terraform apply -auto-approve \
+                        -var key_name=test \
+                        -var private_key_path="${SSH_KEY_PATH}"
+                    '''
                     }
 
                 }
