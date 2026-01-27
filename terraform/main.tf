@@ -114,34 +114,6 @@ resource "aws_instance" "petclinic_ec2" {
   }
 }
 
-# ----------------------------
-# Upload docker-compose.yml
-# ----------------------------
-resource "null_resource" "upload_compose" {
-  depends_on = [aws_instance.petclinic_ec2]
-
-  # Correct placement of connection block
-  connection {
-    type        = "ssh"
-    host        = aws_instance.petclinic_ec2.public_ip
-    user        = "ubuntu"
-    private_key = file(var.private_key_path)
-  }
-
-  provisioner "file" {
-    source      = "docker-compose.yml"
-    destination = "/app/docker-compose.yml"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "cd /app",
-      "docker-compose pull",
-      "docker-compose up -d"
-    ]
-  }
-}
-
 output "public_ip" {
   value = aws_instance.petclinic_ec2.public_ip
 }
