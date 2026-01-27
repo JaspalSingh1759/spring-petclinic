@@ -67,32 +67,20 @@ pipeline {
         }
 
         stage('Terraform Apply') {
-            steps {
-                dir('terraform') {
-                withCredentials([
-                    sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY_PATH'),
-                    string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-
-                    sh '''
-                    echo "Creating real SSH key file..."
-
-                    # IMPORTANT: write PEM key into a real file that Jenkins will NOT mask
-                    cp "$SSH_KEY_PATH" /tmp/real_aws_key.pem
-                    chmod 600 /tmp/real_aws_key.pem
-
-                    echo "Running Terraform..."
-                    terraform apply -auto-approve \
-                        -var key_name=test \
-                        -var private_key_path="/tmp/real_aws_key.pem"
-                    '''
-                }
-
-
-                }
+        steps {
+            dir('terraform') {
+            withCredentials([
+                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                sh """
+                terraform apply -auto-approve -var key_name=test
+                """
+            }
             }
         }
+        }
+
 
 
     }

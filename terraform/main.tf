@@ -46,30 +46,67 @@ resource "aws_instance" "petclinic_ec2" {
     #!/bin/bash
     apt-get update -y
 
+    # Install dependencies for Docker repo
     apt-get install -y ca-certificates curl gnupg lsb-release
     mkdir -p /etc/apt/keyrings
 
+    # Add Docker GPG key
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
       gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
+    # Add Docker repository
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
       https://download.docker.com/linux/ubuntu \
       $(lsb_release -cs) stable" \
       > /etc/apt/sources.list.d/docker.list
 
+    # Install Docker & Docker Compose plugin
     apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
+    # Add ubuntu user to docker group
     usermod -aG docker ubuntu
     systemctl enable docker
     systemctl start docker
 
-    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
-      -o /usr/local/bin/docker-compose
-    chmod +x /usr/local/bin/docker-compose
-
+    # Create app directory
     mkdir -p /app
+    cd /app
+
+    # Write docker-compose.yml
+    cat <<'EOC' > docker-compose.yml
+    version: "3.8"
+
+    services:
+      db:
+        image: postgres:15
+        environment:
+          POSTGRES_DB: petclinic
+          POSTGRES_USER: petuser
+          POSTGRES_PASSWORD: petpass
+        ports:
+          - "5432:5432"
+        volumes:
+          - dbdata:/var/lib/postgresql/data
+
+      app:
+        image: jaspalsingh1759/petclinic:latest
+        environment:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
+          SPRING_DATASOURCE_USERNAME: petuser
+          SPRING_DATASOURCE_PASSWORD: petpass
+        ports:
+          - "8080:8080"
+        depends_on:
+          - db
+
+    volumes:
+      dbdata:
+    EOC
+
+    # Start the application
+    docker compose up -d
   EOF
 
   tags = {
