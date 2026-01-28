@@ -29,14 +29,23 @@ pipeline {
                 script {
                     COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
 
+                    // Ensure buildx is available
                     sh """
-                    docker build \
-                      -t ${DOCKER_IMAGE}:latest \
-                      -t ${DOCKER_IMAGE}:${COMMIT} .
+                    docker buildx create --use || true
+                    """
+
+                    // Multi-arch build (amd64 + arm64)
+                    sh """
+                    docker buildx build \
+                    --platform linux/amd64,linux/arm64 \
+                    -t ${DOCKER_IMAGE}:latest \
+                    -t ${DOCKER_IMAGE}:${COMMIT} \
+                    --push .
                     """
                 }
             }
         }
+
 
         stage('Docker Push') {
             steps {

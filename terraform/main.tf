@@ -44,6 +44,12 @@ resource "aws_instance" "petclinic_ec2" {
 
   user_data = <<-EOF
     #!/bin/bash
+    set -ex
+
+    # Log everything to /var/log/user-data.log AND console
+    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+    echo "=== User-data started at $(date) ==="
     apt-get update -y
 
     # Install dependencies for Docker repo
@@ -69,6 +75,17 @@ resource "aws_instance" "petclinic_ec2" {
     usermod -aG docker ubuntu
     systemctl enable docker
     systemctl start docker
+
+    ### --- Wait for Docker to be fully ready ---
+    echo "Waiting for Docker daemon..."
+    for i in {1..30}; do
+      if docker info >/dev/null 2>&1; then
+        echo "Docker is ready."
+        break
+      fi
+      echo "Docker not ready yet... retrying ($i/30)"
+      sleep 2
+    done
 
     # Create app directory
     mkdir -p /app
@@ -106,6 +123,7 @@ resource "aws_instance" "petclinic_ec2" {
     EOC
 
     # Start the application
+    docker compose pull
     docker compose up -d
   EOF
 
