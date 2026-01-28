@@ -29,22 +29,33 @@ pipeline {
                 script {
                     COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
 
-                    // Ensure buildx is available
-                    sh """
-                    docker buildx create --use || true
-                    """
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DH_USER',
+                        passwordVariable: 'DH_PASS'
+                    )]) {
 
-                    // Multi-arch build (amd64 + arm64)
-                    sh """
-                    docker buildx build \
-                    --platform linux/amd64,linux/arm64 \
-                    -t ${DOCKER_IMAGE}:latest \
-                    -t ${DOCKER_IMAGE}:${COMMIT} \
-                    --push .
-                    """
-                }
+                        sh """
+                        echo "Logging in to Docker Hub..."
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                        """
+
+                        // Ensure buildx builder exists
+                        sh "docker buildx create --use || true"
+
+                        // Multi-arch build + push
+                        sh """
+                        docker buildx build \
+                        --platform linux/amd64,linux/arm64 \
+                        -t ${DOCKER_IMAGE}:latest \
+                        -t ${DOCKER_IMAGE}:${COMMIT} \
+                  --push .
+                """
             }
         }
+    }
+}
+
 
 
         stage('Docker Push') {
