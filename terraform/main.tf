@@ -91,7 +91,7 @@ resource "aws_instance" "petclinic_ec2" {
           - dbdata:/var/lib/postgresql/data
 
       app:
-        image: jaspalsingh1759/petclinic:latest
+        image: jaspsing369/petclinic:latest
         environment:
           SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
           SPRING_DATASOURCE_USERNAME: petuser
