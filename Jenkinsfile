@@ -70,6 +70,14 @@ pipeline {
                 }
             }
         }
+        stage('Force EC2 Recreate') {
+            steps {
+                dir('terraform') {
+                    sh "terraform taint aws_instance.petclinic_ec2 || true"
+                }
+            }
+        }
+
 
         stage('Terraform Apply') {
             steps {
