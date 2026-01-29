@@ -98,153 +98,160 @@ resource "aws_instance" "petclinic_ec2" {
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
   vpc_security_group_ids = [aws_security_group.petclinic_sg.name]
 
-  user_data = <<-EOF
-    #!/bin/bash
-    set -ex
+user_data = <<-EOF
+#!/bin/bash
+set -ex
 
-    # === Logging Setup ===
-    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
-    echo "=== User-data started at $(date) ==="
+### =======================
+### Cloud-init Logging
+### =======================
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+echo "=== User-data started at \$(date) ==="
 
-    # ------------------------------
-    # 1. System Prep & Dependencies
-    # ------------------------------
-    apt-get update -y
-    apt-get install -y \
-      ca-certificates curl gnupg lsb-release jq awscli \
-      gnupg2 software-properties-common
+### =======================
+### 1. System Prep
+### =======================
+apt-get update -y
+apt-get install -y \
+  ca-certificates curl gnupg lsb-release jq awscli \
+  gnupg2 software-properties-common
 
-    # ------------------------------
-    # 2. Install Docker (your code)
-    # ------------------------------
-    mkdir -p /etc/apt/keyrings
+### =======================
+### 2. Install Docker
+### =======================
+mkdir -p /etc/apt/keyrings
 
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-    echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/ubuntu \
-    $(lsb_release -cs) stable" \
-    > /etc/apt/sources.list.d/docker.list
+echo \
+"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+ https://download.docker.com/linux/ubuntu \
+ \$(lsb_release -cs) stable" \
+ > /etc/apt/sources.list.d/docker.list
 
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    usermod -aG docker ubuntu
-    systemctl enable docker
-    systemctl start docker
+usermod -aG docker ubuntu
+systemctl enable docker
+systemctl start docker
 
-    # Wait for Docker
-    echo "Waiting for Docker daemon..."
-    for i in {1..30}; do
-      if docker info >/dev/null 2>&1; then
-        echo "Docker is ready."
-        break
-      fi
-      echo "Docker not ready yet... retrying ($i/30)"
-      sleep 2
-    done
+### Wait for Docker
+echo "Waiting for Docker daemon..."
+for i in {1..30}; do
+  if docker info >/dev/null 2>&1; then
+    echo "Docker is ready."
+    break
+  fi
+  echo "Docker not ready yet... retrying (\$i/30)"
+  sleep 2
+done
 
-    # ------------------------------
-    # 3. Install REX-Ray (Ubuntu)
-    # ------------------------------
-    echo "Installing REX-Ray..."
+### =======================
+### 3. Install REX-Ray (EBS)
+### =======================
+echo "Installing REX-Ray..."
+REXRAY_VERSION="0.12.1"
 
-    # Download latest stable binary (0.12.1)
-    REXRAY_VERSION="0.12.1"
-    curl -sSL https://github.com/rexray/rexray/releases/download/v0.12.1/rexray_0.12.1_linux_amd64.tar.gz \
-      | tar -xz -C /usr/local/bin
+curl -sSL https://github.com/rexray/rexray/releases/download/v\${REXRAY_VERSION}/rexray_\${REXRAY_VERSION}_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin
 
-    chmod +x /usr/local/bin/rexray
+chmod +x /usr/local/bin/rexray
 
-    # ------------------------------
-    # 4. REX-Ray Config (EBS + IAM Role)
-    # ------------------------------
-    mkdir -p /etc/rexray
+### =======================
+### 4. Create REX-Ray config
+### =======================
+mkdir -p /etc/rexray
 
-    cat <<EOF2 > /etc/rexray/config.yml
-    libstorage:
-      service: ebs
+# Safe region lookup for ALL Ubuntu AMIs
+AWS_REGION=\$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/.\$//')
 
-    ebs:
-      accessKey: ""          # IAM role auto-auth
-      secretKey: ""          # IAM role auto-auth
-      region: "$(curl -s http://169.254.169.254/latest/meta-data/placement/region)"
-    EOF2
+cat <<'EOF_RR' > /etc/rexray/config.yml
+libstorage:
+  service: ebs
 
-    # ------------------------------
-    # 5. systemd Unit for REX-Ray
-    # ------------------------------
-    cat <<'EOF3' > /etc/systemd/system/rexray.service
-    [Unit]
-    Description=REX-Ray Storage Orchestration Engine
-    After=docker.service
-    Wants=docker.service
+ebs:
+  accessKey: ""        # IAM role auto-auth
+  secretKey: ""        # IAM role auto-auth
+  region: REPLACE_REGION
+EOF_RR
 
-    [Service]
-    ExecStart=/usr/local/bin/rexray start -f
-    ExecStop=/usr/local/bin/rexray stop
-    Restart=always
-    RestartSec=5
+# Replace placeholder with detected region
+sed -i "s/REPLACE_REGION/\$AWS_REGION/" /etc/rexray/config.yml
 
-    [Install]
-    WantedBy=multi-user.target
-    EOF3
+### =======================
+### 5. REX-Ray systemd service
+### =======================
+cat <<'EOF_SYS' > /etc/systemd/system/rexray.service
+[Unit]
+Description=REX-Ray Storage Orchestration Engine
+After=docker.service
+Wants=docker.service
 
-    systemctl daemon-reload
-    systemctl enable rexray
-    systemctl start rexray
+[Service]
+ExecStart=/usr/local/bin/rexray start -f
+ExecStop=/usr/local/bin/rexray stop
+Restart=always
+RestartSec=5
 
-    sleep 5
-    rexray volume ls || echo "REX-Ray may still be initializing…"
+[Install]
+WantedBy=multi-user.target
+EOF_SYS
 
-    # ------------------------------
-    # 6. Your Application Setup
-    # ------------------------------
-    mkdir -p /app
-    cd /app
+systemctl daemon-reload
+systemctl enable rexray
+systemctl start rexray
 
-    cat <<'EOC' > docker-compose.yml
-    version: "3.8"
+sleep 5
+rexray volume ls || echo "REX-Ray still initializing..."
 
-    services:
-      db:
-        image: postgres:15
-        environment:
-          POSTGRES_DB: petclinic
-          POSTGRES_USER: petuser
-          POSTGRES_PASSWORD: petpass
-        ports:
-          - "5432:5432"
-        volumes:
-          - pgdata:/var/lib/postgresql/data   # <---- using REX-Ray EBS volume driver
+### =======================
+### 6. Application Setup
+### =======================
+mkdir -p /app
+cd /app
 
-      app:
-        image: jaspsing369/petclinic:latest
-        environment:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
-          SPRING_DATASOURCE_USERNAME: petuser
-          SPRING_DATASOURCE_PASSWORD: petpass
-        ports:
-          - "8080:8080"
-        depends_on:
-          - db
+cat <<'EOF_DC' > docker-compose.yml
+version: "3.8"
 
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: petclinic
+      POSTGRES_USER: petuser
+      POSTGRES_PASSWORD: petpass
+    ports:
+      - "5432:5432"
     volumes:
-      pgdata:
-        driver: rexray/ebs
-    EOC
+      - pgdata:/var/lib/postgresql/data   # <-- EBS volume via REX-Ray
 
-    # ------------------------------
-    # 7. Start Application
-    # ------------------------------
-    docker compose pull
-    docker compose up -d
+  app:
+    image: jaspsing369/petclinic:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
+      SPRING_DATASOURCE_USERNAME: petuser
+      SPRING_DATASOURCE_PASSWORD: petpass
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
 
-    echo "=== User-data completed successfully at $(date) ==="
+volumes:
+  pgdata:
+    driver: rexray/ebs
+EOF_DC
 
-  EOF
+### =======================
+### 7. Start Application
+### =======================
+docker compose pull
+docker compose up -d
+
+echo "=== User-data completed successfully at \$(date) ==="
+EOF
+
 
   tags = {
     Name = "petclinic-ubuntu-ec2"
