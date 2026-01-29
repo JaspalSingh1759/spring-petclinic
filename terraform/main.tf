@@ -96,7 +96,7 @@ resource "aws_instance" "petclinic_ec2" {
   key_name      = var.key_name
   #security_groups = [aws_security_group.petclinic_sg.name]
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
-  vpc_security_group_ids = [aws_security_group.demo_sg.id]
+  vpc_security_group_ids = [aws_security_group.petclinic_sg.name]
 
   user_data = <<-EOF
     #!/bin/bash
