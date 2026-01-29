@@ -153,7 +153,7 @@ resource "aws_instance" "petclinic_ec2" {
 
     # Download latest stable binary (0.12.1)
     REXRAY_VERSION="0.12.1"
-    curl -sSL https://github.com/rexray/rexray/releases/download/v${REXRAY_VERSION}/rexray_${REXRAY_VERSION}_linux_amd64.tar.gz \
+    curl -sSL https://github.com/rexray/rexray/releases/download/v0.12.1/rexray_0.12.1_linux_amd64.tar.gz \
       | tar -xz -C /usr/local/bin
 
     chmod +x /usr/local/bin/rexray
