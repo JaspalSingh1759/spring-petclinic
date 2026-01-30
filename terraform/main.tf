@@ -1,64 +1,55 @@
 provider "aws" {
   region = "us-east-1"
 }
-resource "aws_iam_role" "ec2_rexray" {
-  name = "ec2-rexray-role"
+
+# =========================================================
+# IAM ROLE FOR EC2 (MINIMAL, CLEAN, NO REX-RAY)
+# =========================================================
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2-petclinic-role"
+
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
 }
 
 data "aws_iam_policy_document" "ec2_assume" {
   statement {
     actions = ["sts:AssumeRole"]
+
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["ec2.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role_policy" "ec2_policy" {
-  name = "ec2-rexray-policy"
-  role = aws_iam_role.ec2_rexray.id
-  policy = data.aws_iam_policy_document.ec2_policy.json
+# EC2 only needs permission for Describe* (not EBS Create/Delete)
+resource "aws_iam_role_policy" "ec2_basic" {
+  name = "ec2-basic-policy"
+  role = aws_iam_role.ec2_role.id
+
+  policy = data.aws_iam_policy_document.ec2_basic.json
 }
 
-data "aws_iam_policy_document" "ec2_policy" {
+data "aws_iam_policy_document" "ec2_basic" {
   statement {
     actions = [
-      "ec2:CreateVolume","ec2:AttachVolume","ec2:DetachVolume","ec2:DeleteVolume",
-      "ec2:CreateSnapshot","ec2:DescribeVolumes","ec2:DescribeInstances","ec2:ModifyVolume",
-      "ec2:DescribeSnapshots","ec2:CreateTags","ec2:DescribeTags"
+      "ec2:DescribeInstances",
+      "ec2:DescribeVolumes",
+      "ec2:DescribeTags",
+      "ec2:DescribeAvailabilityZones"
     ]
     resources = ["*"]
   }
-  statement {
-    actions = ["kms:Encrypt","kms:Decrypt","kms:GenerateDataKey","kms:DescribeKey"]
-    resources = ["*"]
-  }
 }
 
-resource "aws_kms_key" "ebs_key" {
-  description = "KMS key for encrypted EBS volumes in demo"
-  deletion_window_in_days = 7
-  policy = <<POLICY
-{
-  "Version":"2012-10-17",
-  "Statement":[
-    {
-      "Sid":"Enable IAM",
-      "Effect":"Allow",
-      "Principal":{"AWS":"*"},
-      "Action":"kms:*",
-      "Resource":"*"
-    }
-  ]
-}
-POLICY
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ec2-petclinic-profile"
+  role = aws_iam_role.ec2_role.name
 }
 
-# ----------------------------
-# Security Group
-# ----------------------------
+# =========================================================
+# SECURITY GROUP
+# =========================================================
 resource "aws_security_group" "petclinic_sg" {
   name        = "petclinic-sg"
   description = "Allow SSH and Petclinic access"
@@ -87,179 +78,163 @@ resource "aws_security_group" "petclinic_sg" {
   }
 }
 
-# ----------------------------
-# EC2 Instance (Ubuntu)
-# ----------------------------
+# =========================================================
+# EBS VOLUME FOR POSTGRES (20GB)
+# =========================================================
+resource "aws_ebs_volume" "pgdata" {
+  availability_zone = "us-east-1a"  
+  size              = 20
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name = "pgdata"
+  }
+}
+
+# Attach EBS volume to EC2 (as /dev/sdf → mapped as /dev/nvme1n1)
+resource "aws_volume_attachment" "pg_attach" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.pgdata.id
+  instance_id = aws_instance.petclinic_ec2.id
+}
+
+# =========================================================
+# EC2 INSTANCE
+# =========================================================
 resource "aws_instance" "petclinic_ec2" {
-  ami           = "ami-04a81a99f5ec58529"
-  instance_type = "t2.micro"
-  key_name      = var.key_name
-  #security_groups = [aws_security_group.petclinic_sg.name]
-  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
-  vpc_security_group_ids = [aws_security_group.petclinic_sg.name]
+  ami                         = "ami-04a81a99f5ec58529"
+  instance_type               = "t2.micro"
+  key_name                    = var.key_name
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  vpc_security_group_ids      = [aws_security_group.petclinic_sg.id]
+  availability_zone           = "us-east-1a"
 
-user_data = <<-EOF
-#!/bin/bash
-set -ex
+  # ----------------------------
+  # USER DATA (YOUR NEW SCRIPT)
+  # ----------------------------
+  user_data = <<-EOF
+    #!/bin/bash
+    set -ex
 
-### =======================
-### Cloud-init Logging
-### =======================
-exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
-echo "=== User-data started at \$(date) ==="
+    ### =======================
+    ### Cloud-init Logging
+    ### =======================
+    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+    echo "=== User-data started at \$(date) ==="
 
-### =======================
-### 1. System Prep
-### =======================
-apt-get update -y
-apt-get install -y \
-  ca-certificates curl gnupg lsb-release jq awscli \
-  gnupg2 software-properties-common
+    ### =======================
+    ### 1. System Prep
+    ### =======================
+    apt-get update -y
+    apt-get install -y \
+      ca-certificates curl gnupg lsb-release jq \
+      gnupg2 software-properties-common unzip
 
-### =======================
-### 2. Install Docker
-### =======================
-mkdir -p /etc/apt/keyrings
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip awscliv2.zip
+    sudo ./aws/install
 
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    ### =======================
+    ### 2. Install Docker
+    ### =======================
+    mkdir -p /etc/apt/keyrings
 
-echo \
-"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
- https://download.docker.com/linux/ubuntu \
- \$(lsb_release -cs) stable" \
- > /etc/apt/sources.list.d/docker.list
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable" \
+      > /etc/apt/sources.list.d/docker.list
 
-usermod -aG docker ubuntu
-systemctl enable docker
-systemctl start docker
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-### Wait for Docker
-echo "Waiting for Docker daemon..."
-for i in {1..30}; do
-  if docker info >/dev/null 2>&1; then
-    echo "Docker is ready."
-    break
-  fi
-  echo "Docker not ready yet... retrying (\$i/30)"
-  sleep 2
-done
+    usermod -aG docker ubuntu
+    systemctl enable docker
+    systemctl start docker
 
-### =======================
-### 3. Install REX-Ray (EBS)
-### =======================
-echo "Installing REX-Ray..."
-REXRAY_VERSION="0.12.1"
+    ### Wait for Docker
+    echo "Waiting for Docker daemon..."
+    for i in {1..30}; do
+      if docker info >/dev/null 2>&1; then
+        echo "Docker is ready."
+        break
+      fi
+      echo "Docker not ready yet... retrying (\$i/30)"
+      sleep 2
+    done
 
-curl -sSL https://github.com/rexray/rexray/releases/download/v0.12.1/rexray_0.12.1_linux_amd64.tar.gz \
-  | tar -xz -C /usr/local/bin
+    ### =======================
+    ### 3. Mount & Prepare EBS
+    ### =======================
+    echo "Preparing EBS volume..."
 
-chmod +x /usr/local/bin/rexray
+    sleep 10
+    DEVICE="/dev/nvme1n1"
 
-### =======================
-### 4. Create REX-Ray config
-### =======================
-mkdir -p /etc/rexray
+    if [ ! -b "\$DEVICE" ]; then
+      echo "ERROR: EBS volume not found at \$DEVICE"
+      lsblk
+      exit 1
+    fi
 
-# Safe region lookup for ALL Ubuntu AMIs
-AWS_REGION=\$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/.\$//')
+    if ! blkid \$DEVICE; then
+      echo "Formatting EBS volume as ext4..."
+      mkfs.ext4 \$DEVICE
+    fi
 
-cat <<'EOF_RR' > /etc/rexray/config.yml
-libstorage:
-  service: ebs
+    mkdir -p /data
+    mount \$DEVICE /data
+    echo "\$DEVICE /data ext4 defaults,nofail 0 2" >> /etc/fstab
 
-ebs:
-  accessKey: ""        # IAM role auto-auth
-  secretKey: ""        # IAM role auto-auth
-  region: REPLACE_REGION
-EOF_RR
+    chown -R ubuntu:ubuntu /data
+    chmod 775 /data
 
-# Replace placeholder with detected region
-sed -i "s/REPLACE_REGION/\$AWS_REGION/" /etc/rexray/config.yml
+    ### =======================
+    ### 4. Application Setup
+    ### =======================
+    mkdir -p /app
+    cd /app
 
-### =======================
-### 5. REX-Ray systemd service
-### =======================
-cat <<'EOF_SYS' > /etc/systemd/system/rexray.service
-[Unit]
-Description=REX-Ray Storage Orchestration Engine
-After=docker.service
-Wants=docker.service
+    cat <<'EOF_DC' > docker-compose.yml
+    version: "3.8"
 
-[Service]
-ExecStart=/usr/local/bin/rexray start -f
-ExecStop=/usr/local/bin/rexray stop
-Restart=always
-RestartSec=5
+    services:
+      db:
+        image: postgres:15
+        environment:
+          POSTGRES_DB: petclinic
+          POSTGRES_USER: petuser
+          POSTGRES_PASSWORD: petpass
+        ports:
+          - "5432:5432"
+        volumes:
+          - /data:/var/lib/postgresql/data
 
-[Install]
-WantedBy=multi-user.target
-EOF_SYS
+      app:
+        image: jaspsing369/petclinic:latest
+        environment:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
+          SPRING_DATASOURCE_USERNAME: petuser
+          SPRING_DATASOURCE_PASSWORD: petpass
+        ports:
+          - "8080:8080"
+        depends_on:
+          - db
+    EOF_DC
 
-systemctl daemon-reload
-systemctl enable rexray
-systemctl start rexray
+    ### =======================
+    ### 5. Start Application
+    ### =======================
+    docker compose pull
+    docker compose up -d
 
-sleep 5
-rexray volume ls || echo "REX-Ray still initializing..."
-
-### =======================
-### 6. Application Setup
-### =======================
-mkdir -p /app
-cd /app
-
-cat <<'EOF_DC' > docker-compose.yml
-version: "3.8"
-
-services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: petclinic
-      POSTGRES_USER: petuser
-      POSTGRES_PASSWORD: petpass
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data   # <-- EBS volume via REX-Ray
-
-  app:
-    image: jaspsing369/petclinic:latest
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
-      SPRING_DATASOURCE_USERNAME: petuser
-      SPRING_DATASOURCE_PASSWORD: petpass
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
-
-volumes:
-  pgdata:
-    driver: rexray/ebs
-EOF_DC
-
-### =======================
-### 7. Start Application
-### =======================
-docker compose pull
-docker compose up -d
-
-echo "=== User-data completed successfully at \$(date) ==="
-EOF
-
+    echo "=== User-data completed successfully at \$(date) ==="
+  EOF
 
   tags = {
     Name = "petclinic-ubuntu-ec2"
   }
-}
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-rexray-profile"
-  role = aws_iam_role.ec2_rexray.name
 }
 
 output "public_ip" {
