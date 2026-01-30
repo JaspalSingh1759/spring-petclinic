@@ -113,124 +113,131 @@ resource "aws_instance" "petclinic_ec2" {
   # ----------------------------
   # USER DATA (YOUR NEW SCRIPT)
   # ----------------------------
-  user_data = <<-EOF
-    #!/bin/bash
-    set -ex
+user_data = <<-EOF
+#!/bin/bash
+set -ex
 
-    ### =======================
-    ### Cloud-init Logging
-    ### =======================
-    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
-    echo "=== User-data started at \$(date) ==="
+### =======================
+### Cloud-init Logging
+### =======================
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+echo "=== User-data started at $(date) ==="
 
-    ### =======================
-    ### 1. System Prep
-    ### =======================
-    apt-get update -y
-    apt-get install -y \
-      ca-certificates curl gnupg lsb-release jq \
-      gnupg2 software-properties-common unzip
+### =======================
+### 1. System Prep
+### =======================
+apt-get update -y
+apt-get install -y \
+  ca-certificates curl gnupg lsb-release jq \
+  gnupg2 software-properties-common unzip
 
-    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-    unzip awscliv2.zip
-    sudo ./aws/install
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
 
-    ### =======================
-    ### 2. Install Docker
-    ### =======================
-    mkdir -p /etc/apt/keyrings
+### =======================
+### 2. Install Docker
+### =======================
+mkdir -p /etc/apt/keyrings
 
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable" \
-      > /etc/apt/sources.list.d/docker.list
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable" \
+  > /etc/apt/sources.list.d/docker.list
 
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    usermod -aG docker ubuntu
-    systemctl enable docker
-    systemctl start docker
+usermod -aG docker ubuntu
+systemctl enable docker
+systemctl start docker
 
-    ### Wait for Docker
-    echo "Waiting for Docker daemon..."
-    for i in {1..30}; do
-      if docker info >/dev/null 2>&1; then
-        echo "Docker is ready."
-        break
-      fi
-      echo "Docker not ready yet... retrying (\$i/30)"
-      sleep 2
-    done
+### Wait for Docker
+echo "Waiting for Docker daemon..."
+for i in {1..30}; do
+  if docker info >/dev/null 2>&1; then
+    echo "Docker is ready."
+    break
+  fi
+  echo "Docker not ready yet... retrying ($i/30)"
+  sleep 2
+done
 
-    ### =======================
-    ### 3. Mount & Prepare EBS
-    ### =======================
-    echo "Preparing EBS volume..."
+### =======================
+### 3. Mount & Prepare EBS Volume
+### =======================
+echo "Preparing EBS volume..."
 
-    sleep 10
-    DEVICE="/dev/nvme1n1"
+# Allow time for the disk to attach
+sleep 10
 
-    if [ ! -b "\$DEVICE" ]; then
-      echo "ERROR: EBS volume not found at \$DEVICE"
-      lsblk
-      exit 1
-    fi
+DEVICE="/dev/nvme1n1"
 
-    if ! blkid \$DEVICE; then
-      echo "Formatting EBS volume as ext4..."
-      mkfs.ext4 \$DEVICE
-    fi
+# Validate device exists
+if [ ! -b "$DEVICE" ]; then
+  echo "ERROR: EBS volume not found at $DEVICE"
+  lsblk
+  exit 1
+fi
 
-    mkdir -p /data
-    mount \$DEVICE /data
-    echo "\$DEVICE /data ext4 defaults,nofail 0 2" >> /etc/fstab
+# Format only if needed
+if ! blkid $DEVICE; then
+  echo "Formatting EBS volume as ext4..."
+  mkfs.ext4 $DEVICE
+fi
 
-    chown -R ubuntu:ubuntu /data
-    chmod 775 /data
+mkdir -p /data
+mount $DEVICE /data
 
-    ### =======================
-    ### 4. Application Setup
-    ### =======================
-    mkdir -p /app
-    cd /app
+# Auto-mount on reboot
+echo "$DEVICE /data ext4 defaults,nofail 0 2" >> /etc/fstab
 
-    cat <<'EOF_DC' > docker-compose.yml
-    version: "3.8"
+# Permissions for Postgres
+chown -R ubuntu:ubuntu /data
+chmod 775 /data
 
-    services:
-      db:
-        image: postgres:15
-        environment:
-          POSTGRES_DB: petclinic
-          POSTGRES_USER: petuser
-          POSTGRES_PASSWORD: petpass
-        ports:
-          - "5432:5432"
-        volumes:
-          - /data:/var/lib/postgresql/data
+### =======================
+### 4. Application Setup (Docker Compose)
+### =======================
+mkdir -p /app
+cd /app
 
-      app:
-        image: jaspsing369/petclinic:latest
-        environment:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
-          SPRING_DATASOURCE_USERNAME: petuser
-          SPRING_DATASOURCE_PASSWORD: petpass
-        ports:
-          - "8080:8080"
-        depends_on:
-          - db
-    EOF_DC
+cat <<EOF_DC > docker-compose.yml
+version: "3.8"
 
-    ### =======================
-    ### 5. Start Application
-    ### =======================
-    docker compose pull
-    docker compose up -d
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: petclinic
+      POSTGRES_USER: petuser
+      POSTGRES_PASSWORD: petpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - /data:/var/lib/postgresql/data
 
-    echo "=== User-data completed successfully at \$(date) ==="
-  EOF
+  app:
+    image: jaspsing369/petclinic:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
+      SPRING_DATASOURCE_USERNAME: petuser
+      SPRING_DATASOURCE_PASSWORD: petpass
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+EOF_DC
+
+### =======================
+### 5. Start Application
+### =======================
+docker compose pull
+docker compose up -d
+
+echo "=== User-data completed successfully at $(date) ==="
+EOF
 
   tags = {
     Name = "petclinic-ubuntu-ec2"
