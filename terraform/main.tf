@@ -203,38 +203,6 @@ chmod 775 /data
 mkdir -p /app
 cd /app
 
-cat <<EOF_DC > docker-compose.yml
-version: "3.8"
-
-services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: petclinic
-      POSTGRES_USER: petuser
-      POSTGRES_PASSWORD: petpass
-    ports:
-      - "5432:5432"
-    volumes:
-      - /data:/var/lib/postgresql/data
-
-  app:
-    image: jaspsing369/petclinic:latest
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/petclinic
-      SPRING_DATASOURCE_USERNAME: petuser
-      SPRING_DATASOURCE_PASSWORD: petpass
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
-EOF_DC
-
-### =======================
-### 5. Start Application
-### =======================
-docker compose pull
-docker compose up -d
 
 echo "=== User-data completed successfully at $(date) ==="
 EOF
